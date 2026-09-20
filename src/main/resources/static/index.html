@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>震相合议室</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<header>
+    <h1>震相合议室</h1>
+    <div class="toolbar">
+        <button id="seedBtn">载入固定虚拟数据</button>
+        <button id="refreshBtn">刷新</button>
+        <select id="interpSelect" title="选择解释"></select>
+        <button id="branchBtn">从冻结解释复制分支</button>
+        <button id="undoBtn">撤销最后动作</button>
+        <button id="freezeBtn">冻结当前解释</button>
+        <button id="replayBtn">旧版本重放</button>
+    </div>
+</header>
+<main>
+    <section class="panel" id="leftPanel">
+        <h2>台站与模型版本</h2>
+        <div class="scroll" id="metaPanel"></div>
+        <h2>操作</h2>
+        <div class="forms" id="formsPanel"></div>
+    </section>
+    <section class="panel" id="centerPanel">
+        <div class="panel-head">
+            <h2>同步波形</h2>
+            <div class="range-row">
+                <label>起点 <input type="number" id="viewStart" step="0.5"></label>
+                <label>窗口秒 <input type="number" id="viewWindow" step="0.5" value="22"></label>
+                <button id="applyRange">应用视图</button>
+                <span id="clockNote"></span>
+            </div>
+        </div>
+        <div id="waveformPanel"></div>
+        <h2>残差图</h2>
+        <canvas id="residualCanvas" width="1100" height="260"></canvas>
+    </section>
+    <section class="panel" id="rightPanel">
+        <h2>候选拾取</h2>
+        <div class="scroll" id="picksPanel"></div>
+        <h2>模型比较</h2>
+        <div id="comparePanel"></div>
+        <h2>事件与冻结信息</h2>
+        <div class="scroll small" id="eventPanel"></div>
+    </section>
+</main>
+<div id="toast"></div>
+<script src="app.js"></script>
+</body>
+</html>
