@@ -1,0 +1,19 @@
+spring:
+  application:
+    name: phase-room
+  datasource:
+    url: jdbc:sqlite:phase-room.db
+    driver-class-name: org.sqlite.JDBC
+    hikari:
+      maximum-pool-size: 1
+  sql:
+    init:
+      mode: always
+      encoding: UTF-8
+server:
+  address: 127.0.0.1
+  port: 5234
+
+phase-room:
+  seed:
+    enabled: true

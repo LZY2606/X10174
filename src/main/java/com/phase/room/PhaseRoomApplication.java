@@ -1,0 +1,11 @@
+package com.phase.room;
+
+import org.springframework.boot.SpringApplication;
+import org.springframework.boot.autoconfigure.SpringBootApplication;
+
+@SpringBootApplication
+public class PhaseRoomApplication {
+    public static void main(String[] args) {
+        SpringApplication.run(PhaseRoomApplication.class, args);
+    }
+}
