@@ -1,0 +1,172 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>震相合议室</title>
+  <style>
+    :root { color-scheme: light; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+    body { margin: 0; background: #f6f7f9; color: #17202a; }
+    header { padding: 18px 24px; background: #14213d; color: white; }
+    header h1 { margin: 0; font-size: 24px; }
+    header p { margin: 6px 0 0; color: #cbd5e1; }
+    main { padding: 18px 24px; display: grid; grid-template-columns: 310px 1fr; gap: 16px; }
+    .card { background: white; border: 1px solid #d9dee7; border-radius: 10px; padding: 14px; box-shadow: 0 1px 2px #0001; }
+    .card h2 { margin: 0 0 12px; font-size: 17px; }
+    label { display: block; margin: 8px 0 4px; font-size: 12px; color: #5b6573; }
+    input, select, textarea, button { font: inherit; box-sizing: border-box; }
+    input, select, textarea { width: 100%; padding: 7px; border: 1px solid #bdc6d2; border-radius: 6px; background: white; }
+    textarea { min-height: 92px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
+    button { border: 0; border-radius: 7px; background: #2563eb; color: white; padding: 8px 10px; margin: 6px 4px 0 0; cursor: pointer; }
+    button.secondary { background: #64748b; }
+    button.good { background: #047857; }
+    button.warn { background: #b45309; }
+    .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+    #branchList div { padding: 7px; border-radius: 6px; margin: 4px 0; background: #f1f5f9; cursor: pointer; }
+    #branchList .active { background: #dbeafe; outline: 1px solid #60a5fa; }
+    #status { margin-top: 10px; white-space: pre-wrap; font-size: 12px; color: #475569; }
+    canvas { width: 100%; background: #fff; border: 1px solid #d9dee7; border-radius: 8px; }
+    table { border-collapse: collapse; width: 100%; font-size: 12px; }
+    th, td { border-bottom: 1px solid #e5e7eb; padding: 6px; text-align: left; }
+    th { color: #475569; background: #f8fafc; position: sticky; top: 0; }
+    .scroll { max-height: 310px; overflow: auto; }
+    .pill { display: inline-block; padding: 2px 7px; border-radius: 999px; font-size: 11px; background: #e0f2fe; }
+    .frozen { background: #dcfce7; color: #166534; }
+  </style>
+</head>
+<body>
+<header>
+  <h1>震相合议室</h1>
+  <p>离线 P / S 拾取复核、版本钉住、模型比较与冻结审计</p>
+</header>
+<main>
+  <section class="card">
+    <h2>数据与分支</h2>
+    <label>导入 JSON（台站 / 模型 / 波形 / 拾取 / 分支）</label>
+    <textarea id="jsonInput"></textarea>
+    <div>
+      <button onclick="submitJson('/api/stations/versions')">台站</button>
+      <button onclick="submitJson('/api/velocity-models/versions')">模型</button>
+      <button onclick="submitJson('/api/waveforms')">波形</button>
+      <button onclick="submitJson('/api/events')">事件</button>
+      <button onclick="submitJson('/api/events/EQ1/picks')">拾取</button>
+      <button onclick="submitJson('/api/branches')">分支</button>
+    </div>
+    <label>分支</label>
+    <div id="branchList"></div>
+    <div class="grid2">
+      <button class="good" onclick="freeze()">冻结</button>
+      <button class="secondary" onclick="cloneBranch()">克隆换模型</button>
+      <button class="warn" onclick="undo()">撤销</button>
+      <button class="secondary" onclick="compare()">比较模型</button>
+    </div>
+    <label>校时修正 ns</label>
+    <div class="grid2"><input id="clockStation" placeholder="STA"><input id="clockNs" value="0"></div>
+    <button onclick="setClock()">应用校时</button>
+    <label>动作 JSON</label>
+    <textarea id="actionJson"></textarea>
+    <button onclick="applyAction()">执行动作</button>
+    <div id="status">准备就绪。所有资源均来自本机服务。</div>
+  </section>
+  <section>
+    <div class="card">
+      <h2>同步波形、理论到时与候选区间</h2>
+      <canvas id="trace" height="360"></canvas>
+    </div>
+    <div class="card" style="margin-top:16px">
+      <h2>候选与残差</h2>
+      <canvas id="residual" height="180"></canvas>
+      <div class="scroll" id="tables"></div>
+    </div>
+  </section>
+</main>
+<script>
+let branch = null;
+let waveforms = [];
+let compareResult = null;
+const $ = id => document.getElementById(id);
+async function api(path, options) {
+  const response = await fetch(path, options);
+  const text = await response.text();
+  const data = text ? JSON.parse(text) : {};
+  if (!response.ok) throw new Error(data.error || response.status);
+  return data;
+}
+async function submitJson(path) {
+  try { await api(path, {method:'POST', headers:{'Content-Type':'application/json'}, body:$('jsonInput').value}); await refreshAll(); setStatus('已提交 ' + path); }
+  catch (e) { setStatus(e.message); }
+}
+async function refreshAll() {
+  const list = await api('/api/branches');
+  $('branchList').innerHTML = list.map(b => `<div class="${branch && branch.branch_code===b.branch_code?'active':''}" onclick="loadBranch('${b.branch_code}')"><b>${b.branch_code}</b> ${b.name} <span class="pill ${b.frozen_at?'frozen':''}">${b.frozen_at?'FROZEN':'OPEN'}</span></div>`).join('');
+  waveforms = await api('/api/waveforms');
+  drawTraces();
+}
+async function loadBranch(code) {
+  branch = await api('/api/branches/' + code);
+  await compareSilently();
+  drawTraces();
+  renderTables();
+  setStatus('已加载 ' + code);
+}
+async function applyAction() {
+  if (!branch) return;
+  try { await api('/api/branches/'+branch.branch_code+'/actions', {method:'POST', headers:{'Content-Type':'application/json'}, body:$('actionJson').value}); await refreshAll(); await loadBranch(branch.branch_code); }
+  catch(e) { setStatus(e.message); }
+}
+async function undo(){ if(branch){ await api('/api/branches/'+branch.branch_code+'/undo',{method:'POST'}); await refreshAll(); await loadBranch(branch.branch_code); }}
+async function freeze(){ try { if(branch){ await api('/api/branches/'+branch.branch_code+'/freeze',{method:'POST'}); await refreshAll(); await loadBranch(branch.branch_code); }} catch(e){setStatus(e.message);} }
+async function setClock(){ if(!branch)return; await api('/api/branches/'+branch.branch_code+'/actions',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({type:'setClockCorrection',payload:{stationCode:$('clockStation').value,correctionNs:Number($('clockNs').value)}})}); await loadBranch(branch.branch_code); }
+async function cloneBranch(){ if(!branch)return; const modelId = prompt('替换为模型 ID（保留则留空）'); await api('/api/branches/'+branch.branch_code+'/clone',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({branchCode:branch.branch_code+'-C'+Date.now(),name:'cloned',modelId:modelId?Number(modelId):null})}); await refreshAll(); }
+async function compareSilently(){ if(branch) compareResult = await api('/api/branches/'+branch.branch_code+'/compare'); }
+async function compare(){ if(!branch)return; await compareSilently(); drawTraces(); renderTables(); drawResiduals(); }
+function setStatus(s){ $('status').textContent=s; }
+function pickRows(){ return branch ? branch.picks : []; }
+function drawTraces() {
+  const c=$('trace'), ctx=c.getContext('2d'); c.width=c.offsetWidth; ctx.clearRect(0,0,c.width,c.height);
+  ctx.fillStyle='#17202a'; ctx.font='13px sans-serif'; ctx.fillText('波形轨道（缺口、削顶按元数据标红；理论线取当前模型）', 12, 20);
+  const byStation={}; waveforms.forEach(w=>{(byStation[w.station_code]??=[]).push(w)});
+  const stations=Object.keys(byStation).sort();
+  stations.forEach((station,row)=>{
+    const y=45+row*92; ctx.fillStyle='#334155'; ctx.fillText(station,12,y+18);
+    const clips=byStation[station]; const w=clips[clips.length-1];
+    if(!w) return;
+    const samples=JSON.parse(w.samples_json); const x0=80, width=c.width-110;
+    ctx.strokeStyle='#2563eb'; ctx.beginPath();
+    samples.forEach((v,i)=>{const x=x0+i*(width/Math.max(1,samples.length-1)); const yy=y+35-v*28; i?ctx.lineTo(x,yy):ctx.moveTo(x,yy)}); ctx.stroke();
+    ctx.fillStyle='rgba(239,68,68,.14)';
+    JSON.parse(w.gaps_json||'[]').forEach(g=>ctx.fillRect(x0+g[0]/w.sample_count*width,y+8,(g[1]-g[0])/w.sample_count*width,54));
+    ctx.fillStyle='rgba(245,158,11,.18)';
+    JSON.parse(w.overlaps_json||'[]').forEach(g=>ctx.fillRect(x0+g[0]/w.sample_count*width,y+8,(g[1]-g[0])/w.sample_count*width,54));
+    ctx.fillStyle='#dc2626'; JSON.parse(w.clipped_json||'[]').forEach(i=>ctx.fillRect(x0+i*(width/Math.max(1,samples.length-1))-2,y+8,4,54));
+    const currentModel = compareResult && compareResult.models.find(m=>Number(m.modelId)===Number(branch.current_model_id));
+    const stationComparison = currentModel && currentModel.stations.find(s=>s.stationCode===station);
+    if (stationComparison) Object.values(stationComparison.phases).forEach(ph=>{
+      const x=x0+Math.min(1,Math.max(0,ph.predictedTimeNs/8_000_000_000))*width;
+      ctx.strokeStyle='#f59e0b'; ctx.lineWidth=2; ctx.beginPath(); ctx.moveTo(x,y+6); ctx.lineTo(x,y+66); ctx.stroke(); ctx.lineWidth=1;
+      ctx.fillStyle='#b45309'; ctx.fillText('理论'+ph.phase,x+4,y+34);
+    });
+    pickRows().filter(p=>p.station_code===station).forEach(p=>{
+      const x=x0+Math.min(1,Math.max(0,p.time_ns/8_000_000_000))*width;
+      ctx.strokeStyle=p.phase==='P'?'#047857':'#7c3aed'; ctx.setLineDash([4,3]); ctx.beginPath(); ctx.moveTo(x,y+6); ctx.lineTo(x,y+66); ctx.stroke(); ctx.setLineDash([]);
+      ctx.fillStyle=p.phase==='P'?'#047857':'#7c3aed'; ctx.fillRect(x0+((p.confidence_low_ns)/8_000_000_000)*width,y+68,Math.max(1,(p.confidence_high_ns-p.confidence_low_ns)/8_000_000_000*width),4);
+      ctx.fillText(p.phase+' '+p.pick_code,x+4,y+20);
+    });
+  });
+}
+function drawResiduals(){
+ const c=$('residual'),ctx=c.getContext('2d');c.width=c.offsetWidth;ctx.clearRect(0,0,c.width,c.height); if(!compareResult)return;
+ ctx.fillStyle='#17202a';ctx.fillText('残差图（不合格模型以灰色显示；平均残差不能覆盖越窗）',12,20);
+ compareResult.models.forEach((m,i)=>{ const y=45+i*26; ctx.fillStyle=m.eligible?'#2563eb':'#94a3b8'; ctx.fillText(m.modelCode+'/'+m.modelVersion,12,y); const r=Number.isFinite(m.rmsResidualNs)?m.rmsResidualNs/1e9:0; ctx.fillRect(170,y-12,Math.min(c.width-200,Math.abs(r)*80),14); ctx.fillText(r.toFixed(3)+' s',180+Math.min(c.width-210,Math.abs(r)*80),y);});
+}
+function renderTables(){
+ if(!branch)return;
+ const picks=branch.picks.map(p=>`<tr><td>${p.station_code}</td><td>${p.phase}</td><td>${p.pick_code}</td><td>${p.time_ns}</td><td>${p.status}</td><td>${p.polarity}</td><td>v${p.version}</td></tr>`).join('');
+ let comparison='';
+ if(compareResult){comparison=`<h2>模型比较（winner ${compareResult.winnerModelId ?? '无'}；tie=${compareResult.tied}）</h2><table><tr><th>模型</th><th>合格</th><th>RMS ns</th><th>权重和</th></tr>${compareResult.models.map(m=>`<tr><td>${m.modelCode} ${m.modelVersion}</td><td>${m.eligible}</td><td>${m.rmsResidualNs}</td><td>${m.weightSum}</td></tr>`).join('')}</table><h2>台站预测差 / 观测差 / 权重</h2>${compareResult.models.map(m=>`<h3>${m.modelCode}/${m.modelVersion}</h3><table><tr><th>台站</th><th>相</th><th>预测ns</th><th>观测ns</th><th>残差ns</th><th>窗内</th><th>权重来源</th></tr>${m.stations.flatMap(st=>Object.entries(st.phases).map(([ph,d])=>`<tr><td>${st.stationCode}</td><td>${ph}</td><td>${d.predictedTimeNs}</td><td>${d.observedTimeNs}</td><td>${d.residualNs}</td><td>${d.inWindow}</td><td>${JSON.stringify(d.weightSources)}</td></tr>`)).join('')}</table><p>P-S 预测差：${m.stations.map(st=>`${st.stationCode}=${st.predictedDiffNs??'-'}`).join('；')}；P-S 观测差：${m.stations.map(st=>`${st.stationCode}=${st.observedDiffNs??'-'}`).join('；')}</p>`).join('')}`;}
+ $('tables').innerHTML=`<table><tr><th>台站</th><th>相</th><th>候选</th><th>时间ns</th><th>状态</th><th>极性</th><th>版本</th></tr>${picks}</table>${comparison}`;
+}
+refreshAll();
+</script>
+</body>
+</html>
